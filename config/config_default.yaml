@@ -7,6 +7,41 @@ kraken:
     signal_address: 0.0.0.0                                # Signal listening address
     port: 8081                                             # Signal port
     chaos_scenarios:
+        # List of policies/chaos scenarios to load
+        - arcaflow_scenarios:
+            - scenarios/arcaflow/cpu-hog/input.yaml
+            - scenarios/arcaflow/memory-hog/input.yaml
+            - scenarios/arcaflow/io-hog/input.yaml
+        - application_outages:
+            - scenarios/openshift/app_outage.yaml
+        - container_scenarios:                             # List of chaos pod scenarios to load
+            - -    scenarios/openshift/container_etcd.yml
+        - plugin_scenarios:
+            - scenarios/openshift/etcd.yml
+            - scenarios/openshift/regex_openshift_pod_kill.yml
+            - scenarios/openshift/vmware_node_scenarios.yml
+            - scenarios/openshift/network_chaos_ingress.yml
+            - scenarios/openshift/prom_kill.yml
+        - node_scenarios:                                  # List of chaos node scenarios to load
+            -   scenarios/openshift/node_scenarios_example.yml
+        - plugin_scenarios:
+            - scenarios/openshift/openshift-apiserver.yml
+            - scenarios/openshift/openshift-kube-apiserver.yml
+        - time_scenarios:                                  # List of chaos time scenarios to load
+            - scenarios/openshift/time_scenarios_example.yml
+        - cluster_shut_down_scenarios:
+            - - scenarios/openshift/cluster_shut_down_scenario.yml
+              - scenarios/openshift/post_action_shut_down.py
+        - service_disruption_scenarios:
+             - - scenarios/openshift/regex_namespace.yaml
+             - - scenarios/openshift/ingress_namespace.yaml
+               - scenarios/openshift/post_action_namespace.py
+        - zone_outages:
+            - scenarios/openshift/zone_outage.yaml
+        - pvc_scenarios:
+            - scenarios/openshift/pvc_scenario.yaml
+        - network_chaos:
+            - scenarios/openshift/network_chaos.yaml
 
 cerberus:
     cerberus_enabled: False                                # Enable it when cerberus is previously installed
@@ -50,3 +85,7 @@ telemetry:
      - "(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d+Z).+"      # 2023-09-15T11:20:36.123425532Z log
     oc_cli_path: /usr/bin/oc                                # optional, if not specified will be search in $PATH
     events_backup: True                                     # enables/disables cluster events collection
+
+
+
+
