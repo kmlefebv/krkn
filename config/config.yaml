@@ -1,6 +1,6 @@
 kraken:
     distribution: openshift                                # Distribution can be kubernetes or openshift
-    kubeconfig_path: ~/.kube/config                        # Path to kubeconfig
+    kubeconfig_path: /artifacts/kubeconfig                 # Path to kubeconfig
     exit_on_failure: False                                 # Exit when a post action scenario fails
     publish_kraken_status: True                            # Can be accessed at http://0.0.0.0:8081
     signal_state: RUN                                      # Will wait for the RUN signal when set to PAUSE before running the scenarios, refer docs/signal.md for more details
