@@ -12,7 +12,7 @@ COPY --from=azure-cli /usr/local/bin/az /usr/bin/az
 # Install dependencies
 RUN yum install -y git python39 python3-pip jq gettext wget && \
     python3.9 -m pip install -U pip && \
-    git clone https://github.com/krkn-chaos/krkn.git --branch v1.5.6 /root/kraken && \
+    git clone https://github.com/krkn-chaos/krkn.git --branch v1.5.12 /root/kraken && \
     mkdir -p /root/.kube && cd /root/kraken && \
     pip3.9 install -r requirements.txt && \
     pip3.9 install virtualenv && \
@@ -20,7 +20,7 @@ RUN yum install -y git python39 python3-pip jq gettext wget && \
 
 # Get Kubernetes and OpenShift clients from stable releases
 WORKDIR /tmp
-RUN wget https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz && tar -xvf openshift-client-linux.tar.gz && cp oc /usr/local/bin/oc && cp kubectl /usr/local/bin/kubectl
+RUN wget https://mirror.openshift.com/pub/openshift-v4/clients/ocp/stable/openshift-client-linux.tar.gz && tar -xvf openshift-client-linux.tar.gz && cp oc /usr/local/bin/oc && cp oc /usr/bin/oc && cp kubectl /usr/local/bin/kubectl && cp kubectl /usr/bin/kubectl
 
 WORKDIR /root/kraken
 

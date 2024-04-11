@@ -9,6 +9,8 @@ import optparse
 import pyfiglet
 import uuid
 import time
+
+from krkn_lib.models.krkn import ChaosRunOutput, ChaosRunAlertSummary
 from krkn_lib.prometheus.krkn_prometheus import KrknPrometheus
 import kraken.time_actions.common_time_functions as time_actions
 import kraken.performance_dashboards.setup as performance_dashboards
@@ -27,6 +29,7 @@ import server as server
 from kraken import plugins
 from krkn_lib.k8s import KrknKubernetes
 from krkn_lib.ocp import KrknOpenshift
+from krkn_lib.telemetry.elastic import KrknElastic
 from krkn_lib.telemetry.k8s import KrknTelemetryKubernetes
 from krkn_lib.telemetry.ocp import KrknTelemetryOpenshift
 from krkn_lib.models.telemetry import ChaosRunTelemetry
@@ -94,6 +97,9 @@ def main(cfg):
             config["performance_monitoring"], "check_critical_alerts", False
         )
         telemetry_api_url = config["telemetry"].get("api_url")
+        elastic_config = get_yaml_item_value(config,"elastic",{})
+        elastic_url = get_yaml_item_value(elastic_config,"elastic_url","")
+        elastic_index = get_yaml_item_value(elastic_config,"elastic_index","")
         
         # Initialize clients
         if (not os.path.isfile(kubeconfig_path) and
@@ -129,8 +135,6 @@ def main(cfg):
         except:
             kubecli.initialize_clients(None)
 
-
-
         # find node kraken might be running on
         kubecli.find_kraken_node()
 
@@ -156,12 +160,22 @@ def main(cfg):
         # Cluster info
         logging.info("Fetching cluster info")
         cv = ""
-        if config["kraken"]["distribution"] == "openshift":
+        if distribution == "openshift":
             cv = ocpcli.get_clusterversion_string()
             if prometheus_url is None:
-                connection_data = ocpcli.get_prometheus_api_connection_data()
-                prometheus_url = connection_data.endpoint
-                prometheus_bearer_token = connection_data.token
+                try:
+                    connection_data = ocpcli.get_prometheus_api_connection_data()
+                    if connection_data:
+                        prometheus_url = connection_data.endpoint
+                        prometheus_bearer_token = connection_data.token
+                    else: 
+                        # If can't make a connection, set alerts to false
+                        enable_alerts = False
+                        critical_alerts = False
+                except Exception:
+                    logging.error("invalid distribution selected, running openshift scenarios against kubernetes cluster."
+                                  "Please set 'kubernetes' in config.yaml krkn.platform and try again")
+                    sys.exit(1)
         if cv != "":
             logging.info(cv)
         else:
@@ -170,9 +184,9 @@ def main(cfg):
         # KrknTelemetry init
         telemetry_k8s = KrknTelemetryKubernetes(safe_logger, kubecli)
         telemetry_ocp = KrknTelemetryOpenshift(safe_logger, ocpcli)
-
-
-        if enable_alerts:
+        telemetry_elastic = KrknElastic(safe_logger,elastic_url)
+        summary = ChaosRunAlertSummary()
+        if enable_alerts or check_critical_alerts:
             prometheus = KrknPrometheus(prometheus_url, prometheus_bearer_token)
 
         logging.info("Server URL: %s" % kubecli.get_host())
@@ -203,7 +217,8 @@ def main(cfg):
 
         # Capture the start time
         start_time = int(time.time())
-
+        post_critical_alerts = 0
+        chaos_output = ChaosRunOutput()
         chaos_telemetry = ChaosRunTelemetry()
         chaos_telemetry.run_uuid = run_uuid
         # Loop to run the chaos starts here
@@ -317,7 +332,7 @@ def main(cfg):
                         elif scenario_type == "application_outages":
                             logging.info("Injecting application outage")
                             failed_post_scenarios, scenario_telemetries = application_outage.run(
-                                scenarios_list, config, wait_duration, telemetry_k8s)
+                                scenarios_list, config, wait_duration, kubecli, telemetry_k8s)
                             chaos_telemetry.scenarios.extend(scenario_telemetries)
 
                         # PVC scenarios
@@ -334,25 +349,21 @@ def main(cfg):
                             failed_post_scenarios, scenario_telemetries = network_chaos.run(scenarios_list, config, wait_duration, kubecli, telemetry_k8s)
 
                         # Check for critical alerts when enabled
-                        if enable_alerts and check_critical_alerts :
-                            logging.info("Checking for critical alerts firing post choas")
+                        post_critical_alerts = 0
+                        if check_critical_alerts:
+                            prometheus_plugin.critical_alerts(prometheus,
+                                                              summary,
+                                                              run_uuid,
+                                                              scenario_type,
+                                                              start_time,
+                                                              datetime.datetime.now())
 
-                            ##PROM
-                            query = r"""ALERTS{severity="critical"}"""
-                            end_time = datetime.datetime.now()
-                            critical_alerts = prometheus.process_prom_query_in_range(
-                                query,
-                                start_time = datetime.datetime.fromtimestamp(start_time),
-                                end_time = end_time
+                            chaos_output.critical_alerts = summary
+                            post_critical_alerts = len(summary.post_chaos_alerts)
+                            if post_critical_alerts > 0:
+                                logging.error("Post chaos critical alerts firing please check, exiting")
+                                break
 
-                            )
-                            critical_alerts_count = len(critical_alerts)
-                            if critical_alerts_count > 0:
-                                logging.error("Critical alerts are firing: %s", critical_alerts)
-                                logging.error("Please check, exiting")
-                                sys.exit(1)
-                            else:
-                                logging.info("No critical alerts are firing!!")
 
             iteration += 1
             logging.info("")
@@ -366,27 +377,52 @@ def main(cfg):
         # if platform is openshift will be collected
         # Cloud platform and network plugins metadata
         # through OCP specific APIs
-        if config["kraken"]["distribution"] == "openshift":
+        if distribution == "openshift":
             telemetry_ocp.collect_cluster_metadata(chaos_telemetry)
         else:
             telemetry_k8s.collect_cluster_metadata(chaos_telemetry)
 
         decoded_chaos_run_telemetry = ChaosRunTelemetry(json.loads(chaos_telemetry.to_json()))
-        logging.info(f"Telemetry data:\n{decoded_chaos_run_telemetry.to_json()}")
-
+        chaos_output.telemetry = decoded_chaos_run_telemetry
+        logging.info(f"Chaos data:\n{chaos_output.to_json()}")
+        telemetry_elastic.upload_data_to_elasticsearch(decoded_chaos_run_telemetry.to_json(), elastic_index)
         if config["telemetry"]["enabled"]:
-            logging.info(f"telemetry data will be stored on s3 bucket folder: {telemetry_api_url}/download/{telemetry_request_id}")
+            logging.info(f'telemetry data will be stored on s3 bucket folder: {telemetry_api_url}/files/'
+                         f'{(config["telemetry"]["telemetry_group"] if config["telemetry"]["telemetry_group"] else "default")}/'
+                         f'{telemetry_request_id}')
             logging.info(f"telemetry upload log: {safe_logger.log_file_name}")
             try:
                 telemetry_k8s.send_telemetry(config["telemetry"], telemetry_request_id, chaos_telemetry)
                 telemetry_k8s.put_cluster_events(telemetry_request_id, config["telemetry"], start_time, end_time)
+                telemetry_k8s.put_critical_alerts(telemetry_request_id, config["telemetry"], summary)
                 # prometheus data collection is available only on Openshift
-                if config["telemetry"]["prometheus_backup"] and config["kraken"]["distribution"] == "openshift":
-                    safe_logger.info("archives download started:")
-                    prometheus_archive_files = telemetry_ocp.get_ocp_prometheus_data(config["telemetry"], telemetry_request_id)
-                    safe_logger.info("archives upload started:")
-                    telemetry_k8s.put_prometheus_data(config["telemetry"], prometheus_archive_files, telemetry_request_id)
-                if config["telemetry"]["logs_backup"]:
+                if config["telemetry"]["prometheus_backup"]:
+                    prometheus_archive_files = ''
+                    if distribution == "openshift" :
+                        prometheus_archive_files = telemetry_ocp.get_ocp_prometheus_data(config["telemetry"], telemetry_request_id)
+                    else:
+                        if (config["telemetry"]["prometheus_namespace"] and
+                                config["telemetry"]["prometheus_pod_name"] and
+                                config["telemetry"]["prometheus_container_name"]):
+                            try:
+                                prometheus_archive_files = telemetry_k8s.get_prometheus_pod_data(
+                                    config["telemetry"],
+                                    telemetry_request_id,
+                                    config["telemetry"]["prometheus_pod_name"],
+                                    config["telemetry"]["prometheus_container_name"],
+                                    config["telemetry"]["prometheus_namespace"]
+                                )
+                            except Exception as e:
+                                logging.error(f"failed to get prometheus backup with exception {str(e)}")
+                        else:
+                            logging.warning("impossible to backup prometheus,"
+                                            "check if config contains telemetry.prometheus_namespace, "
+                                            "telemetry.prometheus_pod_name and "
+                                            "telemetry.prometheus_container_name")
+                    if prometheus_archive_files:
+                        safe_logger.info("starting prometheus archive upload:")
+                        telemetry_k8s.put_prometheus_data(config["telemetry"], prometheus_archive_files, telemetry_request_id)
+                if config["telemetry"]["logs_backup"] and distribution == "openshift":
                     telemetry_ocp.put_ocp_logs(telemetry_request_id, config["telemetry"], start_time, end_time)
             except Exception as e:
                 logging.error(f"failed to send telemetry data: {str(e)}")
@@ -408,11 +444,15 @@ def main(cfg):
                 logging.error("Alert profile is not defined")
                 sys.exit(1)
 
+        if post_critical_alerts > 0:
+            logging.error("Critical alerts are firing, please check; exiting")
+            sys.exit(2)
+
         if failed_post_scenarios:
             logging.error(
                 "Post scenarios are still failing at the end of all iterations"
             )
-            sys.exit(1)
+            sys.exit(2)
 
         logging.info(
             "Successfully finished running Kraken. UUID for the run: "
