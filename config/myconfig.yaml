@@ -7,7 +7,19 @@ kraken:
     signal_address: 0.0.0.0                                # Signal listening address
     port: 8081                                             # Signal port
     chaos_scenarios:
-        - scenarios/openshift/node_scenarios_example.yml
+        - arcaflow_scenarios:
+        - application_outages:
+        - container_scenarios:
+        - plugin_scenarios:
+        - node_scenarios:
+            - scenarios/openshift/node_scenarios_example.yml
+        - plugin_scenarios:
+        - time_scenarios:
+        - cluster_shut_down_scenarios:
+        - service_disruption_scenarios:
+        - zone_outages:
+        - pvc_scenarios:
+        - network_chaos:
 
 cerberus:
     cerberus_enabled: False                                # Enable it when cerberus is previously installed
