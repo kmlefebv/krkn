@@ -7,8 +7,7 @@ kraken:
     signal_address: 0.0.0.0                                # Signal listening address
     port: 8081                                             # Signal port
     chaos_scenarios:
-        - node_scenarios:
-            - scenarios/openshift/node_scenarios_example.yml
+
 cerberus:
     cerberus_enabled: False                                # Enable it when cerberus is previously installed
     cerberus_url:                                          # When cerberus_enabled is set to True, provide the url where cerberus publishes go/no-go signal
